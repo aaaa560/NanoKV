@@ -1,6 +1,6 @@
 import ast
 import json
-
+import os
 from batata import FileManager, ParamError, err
 from typing import Any
 
@@ -8,6 +8,7 @@ from typing import Any
 class NKVManager(FileManager):
     """Nano Key-Value storage - Simples e Rápido"""
     SEPS: list[str] = ['|', '/', '\\', ' ', '-']
+    DEC_TYPES: list[str] = ['[', '{', '(', ')', '}', ']']
 
     def __init__(self, name: str, path: str = './', sep_type: str = '|'):
         if '.' in name:
@@ -16,6 +17,8 @@ class NKVManager(FileManager):
             name += '.nkv'
 
         super().__init__(name=name, path=path)
+        if not self.path.exists():
+            os.mkdir(self.path)
 
         if sep_type not in self.SEPS:
             raise ParamError(
@@ -47,6 +50,32 @@ class NKVManager(FileManager):
             with open(self.arquivo, 'a', encoding='utf-8') as file:
                 file.write(f'{key}{self.sep_type}{type(value).__name__}:{value}\n')
 
+    def write_decorator(self, decorator: str, tipe: str = '[') -> None:
+        if tipe not in self.DEC_TYPES:
+            raise ParamError(
+                message='\033[1;31mParametro "tipe" invalido',
+                param='tipe',
+                esperado=' | '.join(self.DEC_TYPES)
+            )
+        ldec, rdec = '', ''
+
+        match tipe:
+            case '[':
+                ldec, rdec = '[', ']'
+            case '{':
+                ldec, rdec = '{', '}'
+            case '(':
+                ldec, rdec = '(', ')'
+            case _:
+                raise ParamError(
+                    message='\033[1;31mParametro "tipe" invalido',
+                    param='tipe',
+                    esperado=' | '.join(self.DEC_TYPES)
+                )
+
+        with open(self.arquivo, 'a', encoding='utf-8') as file:
+            file.write(f'{ldec}{decorator}{rdec}\n')
+
     def no_typed_write(self, key: str, value: Any) -> None:
         try:
             with open(self.arquivo, 'a', encoding='utf-8') as file:
@@ -59,7 +88,7 @@ class NKVManager(FileManager):
             with open(self.arquivo, 'a', encoding='utf-8') as file:
                 file.write(f'{key}{self.sep_type}{value}\n')
 
-    def read(self) -> dict[str, Any]:
+    def read(self, decs: bool = False) -> dict[str, Any]:
         TYPE_MAP: dict[str, Any] = {
             'str': lambda x: x,
             'int': int,
@@ -72,10 +101,9 @@ class NKVManager(FileManager):
         }
 
         try:
-            with open(self.arquivo, 'r', encoding='utf-8') as file:
-                brute = file.read()
+            brute = self._get_data()
         except FileNotFoundError:
-            err('Arquivo não encontrado! Criando novo arquivo...')
+            print('\033[1;31mArquivo não encontrado! Criando novo arquivo...')
             self.creat()
             return {}
 
@@ -134,6 +162,36 @@ class NKVManager(FileManager):
 
         return content
 
+    def nkv2json(self) -> dict:
+        result: dict = {}
+        this_list = None
+        buffer: list = []
+
+        for line in self._get_data().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+
+            if line.startswith('[') and line.endswith(']'):
+                if this_list is not None:
+                    result[this_list] = buffer
+
+                this_list = line[1:-1]
+                buffer = []
+                continue
+
+            if self.sep_type in line:
+                _, val = line.split(self.sep_type, 1)
+                if val.startswith('str:"') and val.endswith('"'):
+                    val = val[5:-1]
+
+                    buffer.append(val)
+
+        if this_list is not None:
+            result[this_list] = buffer
+
+        return result
+
     def get_sep(self) -> str:
         separator: str
 
@@ -171,6 +229,16 @@ class NKVManager(FileManager):
         self._rewrite(data)
         return True
 
+    def update_batch(self, new_data: dict[str, Any]) -> None:
+        old_data = self.read()
+        for key, value in new_data.items():
+            if key not in old_data:
+                continue
+            old_data[key] = value
+
+        self._rewrite(old_data)
+
+
     def delete(self, key: str) -> bool:
         data = self.read()
 
@@ -183,20 +251,36 @@ class NKVManager(FileManager):
 
         return True
 
-    def write_batch(self, data: dict[str, Any]) -> None:
+    def write_batch(self, data: dict[str, Any] | list[dict[str, Any]], beauty: bool = False) -> None:
         """
         Escreve múltiplos valores de uma vez (otimizado para abundância de dados)
         """
         with open(self.arquivo, 'a', encoding='utf-8') as file:
-            for key, value in data.items():
-                tipo = type(value).__name__
+            if isinstance(data, dict):
+                for key, value in data.items():
+                    tipo = type(value).__name__
 
-                if isinstance(value, str):
-                    file.write(f'{key}{self.sep_type}{tipo}:"{value}"\n')
-                elif isinstance(value, bool):
-                    file.write(f'{key}{self.sep_type}{tipo}:{str(value).lower()}\n')
-                else:
-                    file.write(f'{key}{self.sep_type}{tipo}:{value}\n')
+                    if isinstance(value, str):
+                        file.write(f'{key}{self.sep_type}{tipo}:"{value}"\n')
+                    elif isinstance(value, bool):
+                        file.write(f'{key}{self.sep_type}{tipo}:{str(value).lower()}\n')
+                    else:
+                        file.write(f'{key}{self.sep_type}{tipo}:{value}\n')
+            elif isinstance(data, list):
+                for obj in data:
+                    try:
+                        for key, value in obj.items():
+                            tipo = type(value).__name__
+
+                            if isinstance(value, str):
+                                file.write(f'{key}{self.sep_type}{tipo}:"{value}"\n')
+                            elif isinstance(value, bool):
+                                file.write(f'{key}{self.sep_type}{tipo}:{str(value).lower()}\n')
+                            else:
+                                file.write(f'{key}{self.sep_type}{tipo}:{value}\n')
+                        if beauty: file.write('\n')
+                    except Exception as e:
+                        err(f'\033[1;34m{e}')
 
     def jsonify(self, indent: int = 2) -> str:
         """
@@ -241,13 +325,14 @@ class NKVManager(FileManager):
 
         return '\n'.join(lines)
 
-    def from_json_file(self, json_file: str, typed: bool = True) -> None:
+    def from_json_file(self, json_file: str, typed: bool = True, beauty: bool = False) -> None:
         """
         Converte JSON file e ESCREVE no arquivo NKV
 
         Args:
             json_file: Caminho do arquivo JSON
             typed: Se True, usa tipagem explícita
+            beauty: Deixa um pouco menos feiobm
 
         Exemplo:
             nkv = NKVManager('config.nkv')
@@ -261,7 +346,7 @@ class NKVManager(FileManager):
             f.write('')
 
         if typed:
-            self.write_batch(data)
+            self.write_batch(data, beauty=beauty)
         else:
             with open(self.arquivo, 'w', encoding='utf-8') as f:
                 for key, value in data.items():
@@ -339,7 +424,7 @@ class NKVManager(FileManager):
                 return f'{key}{self.sep_type}{value}'
 
     @staticmethod
-    def _find_couchettes(self, data: str) -> tuple[int, int]:
+    def _find_couchettes(data: str) -> tuple[int, int]:
         return data.find('['), data.find(']') + 1
 
     def _rewrite(self, data: dict[str, Any]) -> None:
@@ -357,3 +442,7 @@ class NKVManager(FileManager):
                     file.write(f'{key}{self.sep_type}"{val}"\n')
                 else:
                     file.write(f'{key}{self.sep_type}{val}\n')
+
+    def _get_data(self) -> str:
+        with open(self.arquivo, 'r', encoding='utf-8') as file:
+            return file.read()

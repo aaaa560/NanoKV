@@ -6,15 +6,15 @@
 import time
 import json
 import csv
-import statistics  # NOVO! Para calcular média e desvio padrão
-import ast  # Para o parsing otimizado de lista/dict/tuple na leitura
+import statistics
+import ast
 from pathlib import Path
 from typing import Any, Callable, Dict, Tuple
 
 # Importa a sua biblioteca (ajuste o caminho se necessário)
 # Assumindo que 'err' é uma função de logging ou print de erro simples,
 # e que 'FileManager' e 'ParamError' estão definidos na sua 'batata-lib'.
-from batata.files import NKVManager, FileManager, ParamError
+from nkv import NKVManager
 
 
 def timeit_consistent(func: Callable, *args,
