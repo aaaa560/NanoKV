@@ -1,8 +1,7 @@
-from nkv import NKVManager
+from nkv import NKVManager, tsplit  # type: ignore
 
-nkv = NKVManager('testes', './tests')
 
-nkv.update_batch({
-    'a': 123,
-    'x': 'teste2'
-})
+with open("tests.nkv", "r") as f:
+    lines = f.readlines()
+    for line in lines:
+        print(tsplit(line, "|", ":"))

@@ -6,5 +6,5 @@ setup(
     description='A simple data file key-value',
     author='Decaptado',
     packages=find_packages(),
-    install_requires=['batata-lib==0.1.8']
+    install_requires=['batata-lib==0.1.8', 'yt-dlp', 'beautifulsoup4']
 )

@@ -1,16 +1,32 @@
 import ast
 import json
 import os
+
+try:
+    import nkv_parser
+    from nkv_parser import tsplit, split
+except ImportError:
+    print(
+        '\033[1;33mAviso: Módulo nkv_parser não encontrado. Certifique-se de que o módulo C++ está compilado corretamente.\033[0m')
+    exit()
+from pathlib import Path
 from batata import FileManager, ParamError, err
 from typing import Any
+
+
+BASE_DIR = Path(__file__).resolve().parent
 
 
 class NKVManager(FileManager):
     """Nano Key-Value storage - Simples e Rápido"""
     SEPS: list[str] = ['|', '/', '\\', ' ', '-']
-    DEC_TYPES: list[str] = ['[', '{', '(', ')', '}', ']']
+    DEC_TYPES: dict[str, list[str]] = {
+        'lista': ['[', ']'],
+        'dict': ['{', '}'],
+        'tuple': ['(', ')'],
+    }
 
-    def __init__(self, name: str, path: str = './', sep_type: str = '|'):
+    def __init__(self, name: str, path: str = './', sep_type: str = '|') -> None:
         if '.' in name:
             name = name.split('.')[0] + '.nkv'
         elif not name.endswith('.nkv'):
@@ -28,6 +44,7 @@ class NKVManager(FileManager):
             )
 
         self.sep_type = sep_type
+        self.arquivo = str((Path(self.path) / name).resolve())
 
         if path.endswith('/'):
             self.arquivo = f'{path}{name}'
@@ -88,79 +105,10 @@ class NKVManager(FileManager):
             with open(self.arquivo, 'a', encoding='utf-8') as file:
                 file.write(f'{key}{self.sep_type}{value}\n')
 
-    def read(self, decs: bool = False) -> dict[str, Any]:
-        TYPE_MAP: dict[str, Any] = {
-            'str': lambda x: x,
-            'int': int,
-            'float': float,
-            'bool': lambda x: x.lower() == 'true',
-            'list': ast.literal_eval,
-            'dict': ast.literal_eval,
-            'tuple': ast.literal_eval,
-            'nonetype': lambda x: None
-        }
-
-        try:
-            brute = self._get_data()
-        except FileNotFoundError:
-            print('\033[1;31mArquivo não encontrado! Criando novo arquivo...')
-            self.creat()
-            return {}
-
-        content: dict[str, Any] = {}
-        lines = brute.splitlines()
-
-        for linha in lines:
-            linha = linha.strip()
-            if not linha:
-                continue
-
-            if '#' in linha:
-                linha = self._strip_comment(linha)
-                if not linha:
-                    continue
-
-            parts = linha.split(self.sep_type, 1)
-            if len(parts) != 2:
-                continue
-
-            key = parts[0].strip()
-            val_part = parts[1].strip()
-            if ':' in val_part and not (val_part.startswith('"') and val_part.endswith('"')):
-
-                tipo, raw_val = val_part.split(':', 1)
-                tipo = tipo.strip().lower()
-                raw_val = raw_val.strip()
-
-                if raw_val.startswith('"') and raw_val.endswith('"'):
-                    raw_val = raw_val[1:-1]
-
-                converter = TYPE_MAP.get(tipo)
-
-                try:
-                    if converter:
-                        parsed = converter(raw_val)
-                    else:
-                        parsed = raw_val
-                except (ValueError, SyntaxError):
-                    parsed = raw_val
-            else:
-                if val_part.startswith('"') and val_part.endswith('"'):
-                    parsed = val_part[1:-1]
-                elif val_part.lower() in ('true', 'false'):
-                    parsed = True if val_part.lower() == 'true' else False
-                else:
-                    try:
-                        if '.' in val_part:
-                            parsed = float(val_part)
-                        else:
-                            parsed = int(val_part)
-                    except ValueError:
-                        parsed = val_part
-
-            content[key] = parsed
-
-        return content
+    def read(self, decs: bool = False, c_parse: bool = True) -> dict[str, Any]:
+        if c_parse:
+            return nkv_parser.parse(file=self.arquivo, sep=self.sep_type)
+        return self._read_python()
 
     def nkv2json(self) -> dict:
         result: dict = {}
@@ -238,7 +186,6 @@ class NKVManager(FileManager):
 
         self._rewrite(old_data)
 
-
     def delete(self, key: str) -> bool:
         data = self.read()
 
@@ -287,7 +234,7 @@ class NKVManager(FileManager):
         Converte NKV para JSON string
         ✅ Já funciona perfeitamente!
         """
-        data = self.read()
+        data = self.read(big_data=False)
         return json.dumps(data, indent=indent, ensure_ascii=False)
 
     def to_json_file(self, json_path: str, indent: int = 2) -> None:
@@ -295,7 +242,7 @@ class NKVManager(FileManager):
         Converte NKV para arquivo JSON
         ✅ Já funciona perfeitamente!
         """
-        data = self.read()
+        data = self.read(big_data=False)
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=indent, ensure_ascii=False)
 
@@ -446,3 +393,77 @@ class NKVManager(FileManager):
     def _get_data(self) -> str:
         with open(self.arquivo, 'r', encoding='utf-8') as file:
             return file.read()
+
+    def _read_python(self):
+        TYPE_MAP: dict[str, Any] = {
+            'str': lambda x: x,
+            'int': int,
+            'float': float,
+            'bool': lambda x: x.lower() == 'true',
+            'list': ast.literal_eval,
+            'dict': ast.literal_eval,
+            'tuple': ast.literal_eval,
+            'nonetype': lambda x: None
+        }
+
+        try:
+            brute = self._get_data()
+        except FileNotFoundError:
+            print('\033[1;31mArquivo não encontrado! Criando novo arquivo...')
+            self.creat()
+            return {}
+
+        content: dict[str, Any] = {}
+        lines = brute.split('\n')
+        sep = self.sep_type
+
+        for linha in lines:
+            linha = linha.strip()
+
+            if not linha or linha[0:1] == '#':
+                continue
+
+            if '#' in linha:
+                linha = split(linha, '#')[0]
+
+            parts = linha.split(sep, 1)
+            if len(parts) != 2:
+                continue
+
+            key = parts[0].strip()
+            val_part = parts[1].strip()
+            if ':' in val_part and not (val_part.startswith('"') and val_part.endswith('"')):
+
+                tipo, raw_val = val_part.split(':', 1)
+                tipo = tipo.strip().lower()
+                raw_val = raw_val.strip()
+
+                if raw_val.startswith('"') and raw_val.endswith('"'):
+                    raw_val = raw_val[1:-1]
+
+                converter = TYPE_MAP.get(tipo)
+
+                try:
+                    if converter:
+                        parsed = converter(raw_val)
+                    else:
+                        parsed = raw_val
+                except (ValueError, SyntaxError):
+                    parsed = raw_val
+            else:
+                if val_part.startswith('"') and val_part.endswith('"'):
+                    parsed = val_part[1:-1]
+                elif val_part.lower() in ('true', 'false'):
+                    parsed = True if val_part.lower() == 'true' else False
+                else:
+                    try:
+                        if '.' in val_part:
+                            parsed = float(val_part)
+                        else:
+                            parsed = int(val_part)
+                    except ValueError:
+                        parsed = val_part
+
+            content[key] = parsed
+
+        return content
